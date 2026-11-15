@@ -22,6 +22,8 @@ struct Config {
     tab_size: usize,
     expanded: bool,
     separator_pos: usize,
+    left_column: bool,
+    suppress_common_lines: bool,
 }
 
 impl<'a> From<&'a [u8]> for CharIter<'a> {
@@ -73,7 +75,13 @@ impl<'a> Iterator for CharIter<'a> {
 }
 
 impl Config {
-    pub fn new(full_width: usize, tab_size: usize, expanded: bool) -> Self {
+    pub fn new(
+        full_width: usize,
+        tab_size: usize,
+        expanded: bool,
+        left_column: bool,
+        suppress_common_lines: bool,
+    ) -> Self {
         // diff uses this calculation to calculate the size of a half line
         // based on the options passed (like -w, -t, etc.). It's actually
         // pretty useless, because we (actually) don't have any size modifiers
@@ -94,6 +102,8 @@ impl Config {
             tab_size,
             sdiff_half_width: hw,
             separator_pos: ((hw + c2o - 1) >> 1),
+            left_column,
+            suppress_common_lines,
         }
     }
 }
@@ -318,7 +328,13 @@ pub fn diff<T: Write>(
 
     let mut left_lines: Vec<&[u8]> = from_file.split_inclusive(|&c| c == b'\n').collect();
     let mut right_lines: Vec<&[u8]> = to_file.split_inclusive(|&c| c == b'\n').collect();
-    let config = Config::new(params.width, params.tabsize, params.expand_tabs);
+    let config = Config::new(
+        params.width,
+        params.tabsize,
+        params.expand_tabs,
+        params.left_column,
+        params.suppress_common_lines,
+    );
 
     if left_lines.last() == Some(&&b""[..]) {
         left_lines.pop();
@@ -350,17 +366,47 @@ pub fn diff<T: Write>(
     More studies are needed to cover GNU diff side by side with 100% accuracy, which is one of
     the goals of this project : )
     */
+
+    let mut has_diff = false;
+
     for result in diff::slice(&left_lines, &right_lines) {
         match result {
-            Result::Left(left_ln) => push_output(left_ln, b"", b'<', output, &config).unwrap(),
-            Result::Right(right_ln) => push_output(b"", right_ln, b'>', output, &config).unwrap(),
+            Result::Left(left_ln) => {
+                has_diff = true;
+                push_output(left_ln, b"", b'<', output, &config).unwrap()
+            }
+            Result::Right(right_ln) => {
+                has_diff = true;
+                push_output(b"", right_ln, b'>', output, &config).unwrap()
+            }
             Result::Both(left_ln, right_ln) => {
-                push_output(left_ln, right_ln, b' ', output, &config).unwrap()
+                if config.suppress_common_lines {
+                    continue;
+                }
+                if config.left_column {
+                    let line_without_nl = left_ln.strip_suffix(b"\n").unwrap_or(left_ln);
+                    let line_without_cr = line_without_nl
+                        .strip_suffix(b"\r")
+                        .unwrap_or(line_without_nl);
+                    output.write_all(line_without_cr).unwrap();
+                    output.write_all(b"\n").unwrap();
+                } else {
+                    push_output(left_ln, right_ln, b' ', output, &config).unwrap();
+                }
             }
         }
     }
 
-    vec![]
+    // Unlike other diff formatters that return the formatted diff as Vec<u8>,
+    // `side_diff::diff` streams its output directly into the `output` writer.
+    // Callers (such as `diff -y` and `sdiff`) check `result.is_empty()` to
+    // determine whether differences were detected and return exit code 1 vs 0.
+    // Returning `vec![0]` when differences were found signals `Outcome::Different`.
+    if has_diff {
+        vec![0]
+    } else {
+        vec![]
+    }
 }
 
 #[cfg(test)]
