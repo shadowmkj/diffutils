@@ -424,6 +424,8 @@ mod tests {
             expanded: true,
             sdiff_column_two_offset: 0,
             separator_pos: 0,
+            left_column: false,
+            suppress_common_lines: false,
         };
 
         const CONFIG_E_F: Config = Config {
@@ -432,6 +434,8 @@ mod tests {
             expanded: false,
             sdiff_column_two_offset: 0,
             separator_pos: 0,
+            left_column: false,
+            suppress_common_lines: false,
         };
 
         #[test]
@@ -522,6 +526,8 @@ mod tests {
                 tab_size,
                 expanded,
                 separator_pos: 15,
+                left_column: false,
+                suppress_common_lines: false,
             }
         }
 
@@ -871,7 +877,7 @@ mod tests {
 
         impl Default for Config {
             fn default() -> Self {
-                Config::new(130, 8, false)
+                Config::new(130, 8, false, false, false)
             }
         }
 
@@ -1269,7 +1275,7 @@ mod tests {
         use super::*;
 
         fn create_config(full_width: usize, tab_size: usize, expanded: bool) -> Config {
-            Config::new(full_width, tab_size, expanded)
+            Config::new(full_width, tab_size, expanded, false, false)
         }
 
         #[test]
@@ -1334,6 +1340,79 @@ mod tests {
             assert_eq!(config.sdiff_half_width, 0);
             assert_eq!(config.sdiff_column_two_offset, 5);
             assert_eq!(config.separator_pos, 2);
+        }
+    }
+
+    mod sdiff_feature_tests {
+        use super::*;
+
+        #[test]
+        fn test_suppress_common_lines_omits_identical_lines() {
+            let left = b"common header\nleft unique\ncommon footer\n";
+            let right = b"common header\nright unique\ncommon footer\n";
+            let mut out = Vec::new();
+            let params = Params {
+                width: 80,
+                suppress_common_lines: true,
+                ..Default::default()
+            };
+            let result = diff(left, right, &mut out, &params);
+            assert!(
+                !result.is_empty(),
+                "Differences should be reported (non-empty Vec)"
+            );
+            let text = String::from_utf8(out).unwrap();
+            assert!(
+                !text.contains("common header"),
+                "Common lines must be suppressed"
+            );
+            assert!(
+                !text.contains("common footer"),
+                "Common lines must be suppressed"
+            );
+            assert!(text.contains("<"), "Left difference must be displayed");
+            assert!(text.contains(">"), "Right difference must be displayed");
+        }
+
+        #[test]
+        fn test_left_column_only_prints_left_line_on_match() {
+            let left = b"common line\n";
+            let right = b"common line\n";
+            let mut out = Vec::new();
+            let params = Params {
+                width: 80,
+                left_column: true,
+                ..Default::default()
+            };
+            let result = diff(left, right, &mut out, &params);
+            assert!(result.is_empty(), "Identical files should return empty Vec");
+            let text = String::from_utf8(out).unwrap();
+            assert_eq!(
+                text, "common line\n",
+                "Must only print left line with no gutter padding"
+            );
+        }
+
+        #[test]
+        fn test_identical_files_reports_empty_vec() {
+            let content = b"line 1\nline 2\n";
+            let mut out = Vec::new();
+            let params = Params::default();
+            let result = diff(content, content, &mut out, &params);
+            assert!(result.is_empty(), "Identical files must return empty Vec");
+        }
+
+        #[test]
+        fn test_differing_files_reports_non_empty_vec() {
+            let left = b"line a\n";
+            let right = b"line b\n";
+            let mut out = Vec::new();
+            let params = Params::default();
+            let result = diff(left, right, &mut out, &params);
+            assert!(
+                !result.is_empty(),
+                "Differing files must return non-empty Vec"
+            );
         }
     }
 }
