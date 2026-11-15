@@ -1164,10 +1164,10 @@ mod tests {
             let params = generate_params();
             let from_file = b"";
             let to_file = b"";
-            let mut output = vec![];
+            let mut output: Vec<u8> = vec![];
             diff(from_file, to_file, &mut output, &params);
 
-            assert_eq!(output, vec![]);
+            assert!(output.is_empty());
         }
 
         #[test]
