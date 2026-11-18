@@ -126,6 +126,127 @@ mod diffutils_diff {
     }
 }
 
+// bench the in-process diff engine for each output format, on in-memory data
+#[cfg(not(feature = "feat_bench_not_diff"))]
+mod diff_formats {
+    use std::{ffi::OsString, hint::black_box};
+
+    use diffutilslib::params::{Format, Params};
+    use divan::Bencher;
+
+    /// Number of lines of the generated inputs.
+    const LINES: [usize; 2] = [500, 2_000];
+    /// One line out of CHANGE_EVERY is modified in the "to" input.
+    const CHANGE_EVERY: usize = 50;
+
+    /// Builds two deterministic inputs of `lines` lines that differ on every
+    /// `CHANGE_EVERY`th line.
+    fn inputs(lines: usize) -> (Vec<u8>, Vec<u8>) {
+        let mut from = Vec::with_capacity(lines * 60);
+        let mut to = Vec::with_capacity(lines * 60);
+        // simple linear congruential generator so the data is identical on every run
+        let mut state: u64 = 0x2545_f491_4f6c_dd1d;
+        for i in 0..lines {
+            let start = from.len();
+            for word in 0..10 {
+                if word > 0 {
+                    from.push(b' ');
+                }
+                for _ in 0..5 {
+                    state = state
+                        .wrapping_mul(6_364_136_223_846_793_005)
+                        .wrapping_add(1_442_695_040_888_963_407);
+                    from.push(b'a' + ((state >> 33) % 26) as u8);
+                }
+            }
+            from.push(b'\n');
+            to.extend_from_slice(&from[start..]);
+            if i % CHANGE_EVERY == CHANGE_EVERY / 2 {
+                let pos = to.len() - 55;
+                to[pos] = crate::CHANGE_CHAR;
+            }
+        }
+        (from, to)
+    }
+
+    fn params(format: Format) -> Params {
+        Params {
+            executable: OsString::from("diff"),
+            from: OsString::from("from.txt"),
+            to: OsString::from("to.txt"),
+            format,
+            // avoid querying the file system for the header timestamps
+            from_missing: true,
+            to_missing: true,
+            ..Default::default()
+        }
+    }
+
+    #[divan::bench(args = LINES)]
+    fn normal_diff(bencher: Bencher, lines: usize) {
+        let (from, to) = inputs(lines);
+        let params = params(Format::Normal);
+        bencher.bench(|| {
+            black_box(diffutilslib::normal_diff(
+                black_box(&from),
+                black_box(&to),
+                &params,
+            ))
+        });
+    }
+
+    #[divan::bench(args = LINES)]
+    fn unified_diff(bencher: Bencher, lines: usize) {
+        let (from, to) = inputs(lines);
+        let params = params(Format::Unified);
+        bencher.bench(|| {
+            black_box(diffutilslib::unified_diff(
+                black_box(&from),
+                black_box(&to),
+                &params,
+            ))
+        });
+    }
+
+    #[divan::bench(args = LINES)]
+    fn context_diff(bencher: Bencher, lines: usize) {
+        let (from, to) = inputs(lines);
+        let params = params(Format::Context);
+        bencher.bench(|| {
+            black_box(diffutilslib::context_diff(
+                black_box(&from),
+                black_box(&to),
+                &params,
+            ))
+        });
+    }
+
+    #[divan::bench(args = LINES)]
+    fn ed_diff(bencher: Bencher, lines: usize) {
+        let (from, to) = inputs(lines);
+        let params = params(Format::Ed);
+        bencher.bench(|| {
+            black_box(diffutilslib::ed_diff(black_box(&from), black_box(&to), &params).unwrap())
+        });
+    }
+
+    #[divan::bench(args = LINES)]
+    fn side_by_side_diff(bencher: Bencher, lines: usize) {
+        let (from, to) = inputs(lines);
+        let params = params(Format::SideBySide);
+        bencher.bench(|| {
+            let mut output = Vec::new();
+            black_box(diffutilslib::side_by_side_diff(
+                black_box(&from),
+                black_box(&to),
+                &mut output,
+                &params,
+            ));
+            black_box(output)
+        });
+    }
+}
+
 mod parser {
     use std::hint::black_box;
 
